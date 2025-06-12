@@ -39,7 +39,6 @@ import { isPromptOrInstructionsFile } from '../config/promptFileLocations.js';
 import { FrontMatterHeader } from '../codecs/base/markdownExtensionsCodec/tokens/frontMatterHeader.js';
 import { OpenFailed, NotPromptFile, RecursiveReference, FolderReference, ResolveError } from '../../promptFileReferenceErrors.js';
 import { type IPromptContentsProviderOptions, DEFAULT_OPTIONS as CONTENTS_PROVIDER_DEFAULT_OPTIONS } from '../contentProviders/promptContentsProviderBase.js';
-import { CancellationToken } from '../../../../../../base/common/cancellation.js';
 
 /**
  * Options of the {@link BasePromptParser} class.
@@ -512,7 +511,7 @@ export class BasePromptParser<TContentsProvider extends IPromptContentsProvider>
 	/**
 	 * Start the prompt parser.
 	 */
-	public start(token?: CancellationToken): this {
+	public start(): this {
 		// if already started, nothing to do
 		if (this.started) {
 			return this;
@@ -526,7 +525,7 @@ export class BasePromptParser<TContentsProvider extends IPromptContentsProvider>
 			return this;
 		}
 
-		this.promptContentsProvider.start(token);
+		this.promptContentsProvider.start();
 		return this;
 	}
 

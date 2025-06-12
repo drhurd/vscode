@@ -179,14 +179,14 @@ export abstract class PromptContentsProviderBase<
 	/**
 	 * Start producing the prompt contents data.
 	 */
-	public start(token?: CancellationToken): this {
+	public start(): this {
 		assert(
 			!this.isDisposed,
 			'Cannot start contents provider that was already disposed.',
 		);
 
 		// `'full'` means "everything has changed"
-		this.onContentsChanged('full', token);
+		this.onContentsChanged('full');
 
 		// subscribe to the change event emitted by a child class
 		this._register(this.onChangeEmitter.event(this.onContentsChanged, this));
