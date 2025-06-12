@@ -3,19 +3,19 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { CancelablePromise, createCancelablePromise } from '../../../../../base/common/async.js';
 import { Emitter } from '../../../../../base/common/event.js';
 import { Disposable } from '../../../../../base/common/lifecycle.js';
 import { ResourceMap } from '../../../../../base/common/map.js';
-import { URI } from '../../../../../base/common/uri.js';
 import { ILanguageService } from '../../../../../editor/common/languages/language.js';
 import { IModelService } from '../../../../../editor/common/services/model.js';
+import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
 import { IChatRequestVariableEntry, IPromptFileVariableEntry, toPromptFileVariableEntry } from '../../common/chatVariableEntries.js';
-import { IPromptParserResult, IPromptsService } from '../../common/promptSyntax/service/promptsService.js';
+
+import { ChatPromptAttachmentModel } from './chatPromptAttachmentModel.js';
 
 /**
  * Model for a collection of prompt instruction attachments.
- * Starts
+ * See {@linkcode ChatPromptAttachmentModel} for individual attachment.
  */
 export class ChatPromptAttachmentsCollection extends Disposable {
 	/**
@@ -24,38 +24,29 @@ export class ChatPromptAttachmentsCollection extends Disposable {
 	 * See {@linkcode onUpdate}.
 	 */
 	protected _onUpdate = this._register(new Emitter<IPromptFileVariableEntry>());
-
 	/**
 	 * Subscribe to the `onUpdate` event.
 	 */
 	public onUpdate = this._onUpdate.event;
 
+
 	/**
 	 * List of all prompt instruction attachments.
 	 */
-	private _attachments = new ResourceMap<CancelablePromise<IPromptParserResult>>();
-
-
-	constructor(
-		@ILanguageService private readonly languageService: ILanguageService,
-		@IModelService private readonly modelService: IModelService,
-		@IPromptsService private readonly promptsService: IPromptsService,
-	) {
-		super();
-	}
+	private _attachments: ResourceMap<ChatPromptAttachmentModel> = new ResourceMap<ChatPromptAttachmentModel>();
 
 	/**
 	 * Check if any of the attachments is a prompt file.
 	 */
 	public hasPromptFiles(promptFileLanguageId: string): boolean {
-		const hasLanguage = (uri: URI) => {
+		const hasLanguage = ({ uri }: ChatPromptAttachmentModel) => {
 			const model = this.modelService.getModel(uri);
 			const languageId = model ? model.getLanguageId() : this.languageService.guessLanguageIdByFilepathOrFirstLine(uri);
 			return languageId === promptFileLanguageId;
 		};
 
-		for (const uri of this._attachments.keys()) {
-			if (hasLanguage(uri)) {
+		for (const child of this._attachments.values()) {
+			if (hasLanguage(child)) {
 				return true;
 			}
 		}
@@ -67,23 +58,49 @@ export class ChatPromptAttachmentsCollection extends Disposable {
 	 * nested child references of each attachment explicitly attached by user.
 	 */
 	public async getAttachments(): Promise<readonly IChatRequestVariableEntry[]> {
+		await this.allSettled();
+
 		const result = [];
 		const attachments = [...this._attachments.values()];
 
-		for (const parseResultPromise of attachments) {
-			const parseResult = await parseResultPromise;
+		for (const attachment of attachments) {
+			const { reference } = attachment;
 
 			// the usual URIs list of prompt instructions is `bottom-up`, therefore
 			// we do the same here - first add all child references of the model
-			for (const uri of parseResult.allValidReferences) {
-				result.push(toPromptFileVariableEntry(uri, false));
-			}
+			result.push(
+				...reference.allValidReferences.map((link) => {
+					return toPromptFileVariableEntry(link.uri, false);
+				}),
+			);
 
 			// then add the root reference of the model itself
-			result.push(toPromptFileVariableEntry(parseResult.uri, true));
+			result.push(toPromptFileVariableEntry(reference.uri, true));
 		}
 
 		return result;
+	}
+
+	/**
+	 * Promise that resolves when parsing of all attached prompt instruction
+	 * files completes, including parsing of all its possible child references.
+	 */
+	async allSettled(): Promise<void> {
+		const attachments = [...this._attachments.values()];
+
+		await Promise.allSettled(
+			attachments.map((attachment) => {
+				return attachment.allSettled;
+			}),
+		);
+	}
+
+	constructor(
+		@IInstantiationService private readonly instantiationService: IInstantiationService,
+		@ILanguageService private readonly languageService: ILanguageService,
+		@IModelService private readonly modelService: IModelService,
+	) {
+		super();
 	}
 
 	/**
@@ -98,15 +115,8 @@ export class ChatPromptAttachmentsCollection extends Disposable {
 				continue;
 			}
 
-			const parseResult = createCancelablePromise(token => this.promptsService.parse(uri, token));
-			parseResult.then(() => {
-				this._onUpdate.fire(entry);
-			}).catch((error) => {
-				// if parsing fails, we still create an attachment model
-				// to allow the user to see the error and fix it
-				console.error(`Failed to parse prompt file ${uri.toString()}:`, error);
-			});
-			this._attachments.set(uri, parseResult);
+			const instruction = this.instantiationService.createInstance(ChatPromptAttachmentModel, uri, () => this._onUpdate.fire(entry));
+			this._attachments.set(uri, instruction);
 		}
 	}
 
@@ -119,7 +129,7 @@ export class ChatPromptAttachmentsCollection extends Disposable {
 		const attachment = this._attachments.get(uri);
 		if (attachment) {
 			this._attachments.delete(uri);
-			attachment.cancel();
+			attachment.dispose();
 		}
 
 		return this;
@@ -130,7 +140,7 @@ export class ChatPromptAttachmentsCollection extends Disposable {
 	 */
 	public clear(): this {
 		for (const attachment of this._attachments.values()) {
-			attachment.cancel();
+			attachment.dispose();
 		}
 		this._attachments.clear();
 

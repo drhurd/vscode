@@ -3,7 +3,6 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { CancellationToken } from '../../../../base/common/cancellation.js';
 import { Emitter, Event } from '../../../../base/common/event.js';
 import { Disposable } from '../../../../base/common/lifecycle.js';
 import { localize } from '../../../../nls.js';
@@ -50,7 +49,7 @@ export class ChatModeService extends Disposable implements IChatModeService {
 
 	private async refreshCustomPromptModes(fireChangeEvent?: boolean): Promise<void> {
 		try {
-			const modes = await this.promptsService.getCustomChatModes(CancellationToken.None);
+			const modes = await this.promptsService.getCustomChatModes();
 			this.latestCustomPromptModes = modes.map(customMode => new CustomChatMode(customMode));
 			this.hasCustomModes.set(modes.length > 0);
 			if (fireChangeEvent) {
