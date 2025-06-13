@@ -8,16 +8,14 @@ import { readFile } from 'fs/promises';
 import { homedir } from 'os';
 import { parseEnvFile } from '../../../base/common/envfile.js';
 import { untildify } from '../../../base/common/labels.js';
-import { DisposableMap } from '../../../base/common/lifecycle.js';
-import * as path from '../../../base/common/path.js';
 import { StreamSplitter } from '../../../base/node/nodeStreams.js';
 import { findExecutable } from '../../../base/node/processes.js';
 import { ILogService, LogLevel } from '../../../platform/log/common/log.js';
 import { McpConnectionState, McpServerLaunch, McpServerTransportStdio, McpServerTransportType } from '../../contrib/mcp/common/mcpTypes.js';
-import { McpStdioStateHandler } from '../../contrib/mcp/node/mcpStdioStateHandler.js';
-import { IExtHostInitDataService } from '../common/extHostInitDataService.js';
 import { ExtHostMcpService } from '../common/extHostMcp.js';
 import { IExtHostRpcService } from '../common/extHostRpcService.js';
+import * as path from '../../../base/common/path.js';
+import { IExtHostInitDataService } from '../common/extHostInitDataService.js';
 
 export class NodeExtHostMpcService extends ExtHostMcpService {
 	constructor(
@@ -28,7 +26,10 @@ export class NodeExtHostMpcService extends ExtHostMcpService {
 		super(extHostRpc, logService, initDataService);
 	}
 
-	private nodeServers = this._register(new DisposableMap<number, McpStdioStateHandler>());
+	private nodeServers = new Map<number, {
+		abortCtrl: AbortController;
+		child: ChildProcessWithoutNullStreams;
+	}>();
 
 	protected override _startMcp(id: number, launch: McpServerLaunch): void {
 		if (launch.type === McpServerTransportType.Stdio) {
@@ -41,7 +42,8 @@ export class NodeExtHostMpcService extends ExtHostMcpService {
 	override $stopMcp(id: number): void {
 		const nodeServer = this.nodeServers.get(id);
 		if (nodeServer) {
-			nodeServer.stop(); // will get removed from map when process is fully stopped
+			nodeServer.abortCtrl.abort();
+			this.nodeServers.delete(id);
 		} else {
 			super.$stopMcp(id);
 		}
@@ -50,7 +52,7 @@ export class NodeExtHostMpcService extends ExtHostMcpService {
 	override $sendMessage(id: number, message: string): void {
 		const nodeServer = this.nodeServers.get(id);
 		if (nodeServer) {
-			nodeServer.write(message);
+			nodeServer.child.stdin.write(message + '\n');
 		} else {
 			super.$sendMessage(id, message);
 		}
@@ -80,6 +82,7 @@ export class NodeExtHostMpcService extends ExtHostMcpService {
 			env[key] = value === null ? undefined : String(value);
 		}
 
+		const abortCtrl = new AbortController();
 		let child: ChildProcessWithoutNullStreams;
 		try {
 			const home = homedir();
@@ -99,16 +102,15 @@ export class NodeExtHostMpcService extends ExtHostMcpService {
 			child = spawn(executable, args, {
 				stdio: 'pipe',
 				cwd,
+				signal: abortCtrl.signal,
 				env,
 				shell,
 			});
 		} catch (e) {
 			onError(e);
+			abortCtrl.abort();
 			return;
 		}
-
-		// Create the connection manager for graceful shutdown
-		const connectionManager = new McpStdioStateHandler(child);
 
 		this._proxy.$onDidChangeState(id, { state: McpConnectionState.Kind.Starting });
 
@@ -124,22 +126,22 @@ export class NodeExtHostMpcService extends ExtHostMcpService {
 		child.on('spawn', () => this._proxy.$onDidChangeState(id, { state: McpConnectionState.Kind.Running }));
 
 		child.on('error', e => {
-			onError(e);
-		});
-		child.on('exit', code => {
-			this.nodeServers.deleteAndDispose(id);
-
-			if (code === 0 || connectionManager.stopped) {
+			if (abortCtrl.signal.aborted) {
 				this._proxy.$onDidChangeState(id, { state: McpConnectionState.Kind.Stopped });
 			} else {
-				this._proxy.$onDidChangeState(id, {
-					state: McpConnectionState.Kind.Error,
-					message: `Process exited with code ${code}`,
-				});
+				onError(e);
 			}
 		});
+		child.on('exit', code =>
+			code === 0 || abortCtrl.signal.aborted
+				? this._proxy.$onDidChangeState(id, { state: McpConnectionState.Kind.Stopped })
+				: this._proxy.$onDidChangeState(id, {
+					state: McpConnectionState.Kind.Error,
+					message: `Process exited with code ${code}`,
+				})
+		);
 
-		this.nodeServers.set(id, connectionManager);
+		this.nodeServers.set(id, { abortCtrl, child });
 	}
 }
 
