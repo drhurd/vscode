@@ -778,7 +778,7 @@ export interface IEditorOptions {
 	/**
 	 * Sets whether the new experimental edit context should be used instead of the text area.
 	 */
-	editContext?: boolean;
+	experimentalEditContextEnabled?: boolean;
 
 	/**
 	 * Controls support for changing how content is pasted into the editor.
@@ -1966,14 +1966,14 @@ class EffectiveCursorStyle extends ComputedEditorOption<EditorOption.effectiveCu
 
 //#region effectiveExperimentalEditContext
 
-class EffectiveEditContextEnabled extends ComputedEditorOption<EditorOption.effectiveEditContext, boolean> {
+class EffectiveExperimentalEditContextEnabled extends ComputedEditorOption<EditorOption.effectiveExperimentalEditContextEnabled, boolean> {
 
 	constructor() {
-		super(EditorOption.effectiveEditContext);
+		super(EditorOption.effectiveExperimentalEditContextEnabled);
 	}
 
 	public compute(env: IEnvironmentalOptions, options: IComputedEditorOptions): boolean {
-		return env.editContextSupported && options.get(EditorOption.editContext);
+		return env.editContextSupported && options.get(EditorOption.experimentalEditContextEnabled);
 	}
 }
 
@@ -5537,7 +5537,7 @@ export const enum EditorOption {
 	domReadOnly,
 	dragAndDrop,
 	dropIntoEditor,
-	editContext,
+	experimentalEditContextEnabled,
 	emptySelectionClipboard,
 	experimentalGpuAcceleration,
 	experimentalWhitespaceRendering,
@@ -5657,7 +5657,7 @@ export const enum EditorOption {
 	defaultColorDecorators,
 	colorDecoratorsActivatedOn,
 	inlineCompletionsAccessibilityVerbose,
-	effectiveEditContext
+	effectiveExperimentalEditContextEnabled
 }
 
 export const EditorOptions = {
@@ -5931,10 +5931,10 @@ export const EditorOptions = {
 	)),
 	emptySelectionClipboard: register(new EditorEmptySelectionClipboard()),
 	dropIntoEditor: register(new EditorDropIntoEditor()),
-	editContext: register(new EditorBooleanOption(
-		EditorOption.editContext, 'editContext', true,
+	experimentalEditContextEnabled: register(new EditorBooleanOption(
+		EditorOption.experimentalEditContextEnabled, 'experimentalEditContextEnabled', true,
 		{
-			description: nls.localize('editContext', "Sets whether the EditContext API should be used instead of the text area to power input in the editor."),
+			description: nls.localize('experimentalEditContextEnabled', "Sets whether the new experimental edit context should be used instead of the text area."),
 			included: platform.isChrome || platform.isEdge || platform.isNative
 		}
 	)),
@@ -6498,7 +6498,7 @@ export const EditorOptions = {
 	wrappingInfo: register(new EditorWrappingInfoComputer()),
 	wrappingIndent: register(new WrappingIndentOption()),
 	wrappingStrategy: register(new WrappingStrategy()),
-	effectiveEditContextEnabled: register(new EffectiveEditContextEnabled())
+	effectiveExperimentalEditContextEnabled: register(new EffectiveExperimentalEditContextEnabled())
 };
 
 type EditorOptionsType = typeof EditorOptions;
